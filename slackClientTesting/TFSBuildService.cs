@@ -4,10 +4,99 @@ using Microsoft.TeamFoundation.Build.Client;
 using Microsoft.TeamFoundation.Client;
 using Microsoft.TeamFoundation.TestManagement.Client;
 using Microsoft.TeamFoundation.VersionControl.Client;
-
+using System.Text;
 
 namespace slackClientTesting
 {
+    public class BuildDefinitionSpec : IBuildDefinitionSpec
+    {
+       public BuildDefinitionSpec(string tp,string defntName)
+        {
+            teamProject = tp;
+            name = defntName;
+        }
+        private ContinuousIntegrationType ci;
+        public ContinuousIntegrationType ContinuousIntegrationType
+        {
+            get
+            {
+                return ci;
+            }
+
+            set
+            {
+                ci = value;
+            }
+        }
+        private string path = null;
+        public string FullPath
+        {
+            get
+            {
+                return path;
+            }
+        }
+        private string name = null;
+        public string Name
+        {
+            get
+            {
+                return name;
+            }
+
+            set
+            {
+                name=value;
+            }
+        }
+        private QueryOptions options;
+        public QueryOptions Options
+        {
+            get
+            {
+                return options;
+            }
+
+            set
+            {
+                options = value;
+            }
+        }
+        private List<string> propertyNameFilters;
+        public List<string> PropertyNameFilters
+        {
+            get
+            {
+                return propertyNameFilters;
+            }
+
+            set
+            {
+                propertyNameFilters = value;
+            }
+        }
+        private string teamProject;
+        public string TeamProject
+        {
+            get
+            {
+                return teamProject;
+            }
+        }
+        private DefinitionTriggerType triggerType;
+        public DefinitionTriggerType TriggerType
+        {
+            get
+            {
+                return triggerType;
+            }
+
+            set
+            {
+                triggerType=value;
+            }
+        }
+    }
     public class BuildDefinition
     {
         public BuildDefinition(string tp, string name)
@@ -30,6 +119,7 @@ namespace slackClientTesting
         private readonly ITestManagementService _testManagementService;
         private readonly TswaClientHyperlinkService _httpServiceTfs = null;
         private ITestManagementTeamProject _testTeamProject = null;
+        private string pathofTeamProject = null;
         /// <summary>
         /// The constructor sets up build service based on server key
         /// </summary>
@@ -41,6 +131,9 @@ namespace slackClientTesting
             this._versionControlServer = tfs.GetService<VersionControlServer>();
             this._testManagementService = tfs.GetService<ITestManagementService>();
             _httpServiceTfs = tfs.GetService<TswaClientHyperlinkService>();
+            var tp = _versionControlServer.GetTeamProject(@"AllWG");
+            pathofTeamProject = tp.ServerItem;
+           
         }
         /// <summary>
         /// This returns all the builds definitions related to team project name
@@ -52,7 +145,7 @@ namespace slackClientTesting
             var buildList = new List<BuildDefinition>();
             try
             {
-                var teamProjects = this._versionControlServer.GetAllTeamProjects(false);
+                var teamProjects = this._versionControlServer.GetAllTeamProjects(true);
                 IBuildDefinition[] projectBuilds = this._buildServer.QueryBuildDefinitions(teamProjectName);
                 foreach (var definition in projectBuilds)
                 {
@@ -66,6 +159,7 @@ namespace slackClientTesting
             }
             return buildList;
         }
+        
         /// <summary>
         /// This method gets all the builds for specified time period
         /// </summary>
@@ -157,6 +251,25 @@ namespace slackClientTesting
                 //Specify query
                 var spec = _buildServer.CreateBuildDetailSpec(bd.TeamProject, bd.DefinitionName);
                 spec.InformationTypes = null; // for speed improvement
+                spec.MinFinishTime = DateTime.Now.AddDays(-30); //to get only builds of last 2 days
+                spec.MaxFinishTime = DateTime.Now;
+                spec.QueryOrder = BuildQueryOrder.FinishTimeDescending; //get the latest build only
+                spec.QueryOptions = QueryOptions.All;
+                return _buildServer.QueryBuilds(spec).Builds;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        public IBuildDetail[] GetBuildFromLast2days(BuildDefinition bd)
+        {
+            try
+            {
+                //Specify query
+                var spec = _buildServer.CreateBuildDetailSpec(bd.TeamProject, bd.DefinitionName);
+                spec.InformationTypes = null; // for speed improvement
                 spec.MinFinishTime = DateTime.Now.AddDays(-7); //to get only builds of last 2 days
                 spec.MaxFinishTime = DateTime.Now;
                 spec.QueryOrder = BuildQueryOrder.FinishTimeDescending; //get the latest build only
@@ -179,6 +292,69 @@ namespace slackClientTesting
 
             return status;
         }
+        public void GetDetailedStatus(IBuildDetail bd, out string changesetversion,
+          out string buildRequestedBy, 
+          out string compilationStatus, 
+          out string testStatus, out string date)
+        {
+            changesetversion = null;
+            buildRequestedBy = null;
+            compilationStatus = null;
+            testStatus = null;
+            date = null;
+            if (bd != null)
+            {
+                changesetversion = bd.SourceGetVersion;
+                buildRequestedBy = bd.RequestedBy;
+                compilationStatus = bd.CompilationStatus.ToString();
+                testStatus = bd.TestStatus.ToString();
+                date = bd.FinishTime.ToString();                
+            }
+        }
+
+        public Dictionary<string, int> GetMaxCheckIn(string sourceControlPath)
+        {
+           
+            Dictionary<string, int> usersWithMaxCheckIn = 
+                new Dictionary<string, int>();            
+            var changesets = _versionControlServer
+                .QueryHistory(pathofTeamProject 
+                + sourceControlPath,RecursionType.Full,50);
+            if (changesets != null )
+            {
+                foreach (var c in changesets)
+                {
+                    Changeset changeSet = _versionControlServer.GetChangeset(c.ChangesetId);
+                    if (!usersWithMaxCheckIn.ContainsKey(changeSet.OwnerDisplayName))
+                    {
+                        usersWithMaxCheckIn.Add(changeSet.OwnerDisplayName, 1);
+                    }
+                    else
+                    {
+                        int currentCountOfCheckins = usersWithMaxCheckIn[changeSet.OwnerDisplayName];
+                        usersWithMaxCheckIn[changeSet.OwnerDisplayName] = currentCountOfCheckins + 1;
+                    }
+                }
+            }
+            return usersWithMaxCheckIn;
+        }
+
+        public string ConvertDictionaryToString(Dictionary<string, int>  dic)
+        {
+            StringBuilder sb1 = new StringBuilder();
+            foreach(string key in dic.Keys)
+            {
+                sb1.Append(key);
+                sb1.Append(":");
+                sb1.Append(dic[key].ToString());
+                sb1.Append(";");
+            }
+            return sb1.ToString();
+
+        }
 
     }
+   
+
+    
 }

@@ -10,7 +10,7 @@ namespace slackClientTesting
     class Program
     {
         private const string incomingwebhookurl = "https://hooks.slack.com/services/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";
-        private const string tfsserverKey = "https://tfs.slb.com/tfs";
+        private const string tfsserverKey = "https://tfs.slb.com/tfs/wg";
         private const string teamProjectName = @"AllWG";
        
         private const string psibuildName = "PSI.Main-CI";
@@ -18,8 +18,18 @@ namespace slackClientTesting
         private const string ocbuildName = "OC.Main";
         static void Main(string[] args)
         {
-
-            Task.WaitAll(postaMessagetoSlack());
+           
+            //Task.WaitAll(postaMessagetoSlack());
+            GoogleCloudPubSub pubSub = new GoogleCloudPubSub();
+            pubSub.InitializeProjects();
+            string n1 = null; 
+            while (n1 == Console.ReadLine())
+            {
+                if (n1.Equals(String.Empty))
+                {
+                    break;
+                }
+            }
         }
 
         private static async Task postaMessagetoSlack()
